@@ -8,9 +8,9 @@ use mac_oui::Oui;
 use pnet::{
     datalink::{self, DataLinkReceiver, DataLinkSender, NetworkInterface},
     packet::{
-        MutablePacket,
-        arp::{ArpHardwareTypes, ArpOperations, MutableArpPacket},
-        ethernet::{EtherTypes, MutableEthernetPacket},
+        Packet,
+        arp::{ArpHardwareTypes, ArpOperations, ArpPacket, MutableArpPacket},
+        ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket},
     },
     util::MacAddr,
 };
@@ -90,11 +90,10 @@ fn scan_network(
     let oui_db = Oui::default()?;
 
     let num_hosts = (1u32 << (32 - subnet_mask)) - 2; // exclude network/broadcast
+    println!("scanning {} hosts...", num_hosts);
     let network_u32 = u32::from(network);
 
-    let mut devices: Vec<NetDevice> = vec![];
-
-    for i in 1..num_hosts {
+    for i in 1..=num_hosts {
         let target_ip_u32 = network_u32 + i;
         let target_ip = Ipv4Addr::from(target_ip_u32);
 
@@ -102,44 +101,48 @@ fn scan_network(
             continue;
         }
 
-        println!("sending arp request to {}", target_ip);
         send_arp_request(net_access, target_ip, &mut tx);
+        std::thread::sleep(Duration::from_micros(500));
+    }
 
-        let start_time = Instant::now();
-        while start_time.elapsed() < Duration::from_secs(1) {
-            if let Ok(packet) = rx.next() {
-                // println!("got a packet. investigating...");
-                let packet_eth = pnet::packet::ethernet::EthernetPacket::new(packet)
-                    .expect("could not create ethernet packet from incoming rx packet.");
-                if packet_eth.get_ethertype() != EtherTypes::Arp {
-                    // println!("packet is not ARP. skipping...");
-                    continue;
-                }
-
-                println!("got an ARP packet! checking if it's a reply...");
-                let packet_arp = pnet::packet::arp::ArpPacket::new(packet)
-                    .expect("could not create arp packet from incoming rx packet.");
-                if packet_arp.get_operation() != ArpOperations::Reply {
-                    println!("it's not a reply :( skipping...");
-                    continue;
-                }
-
-                println!("it's a reply :D adding device...");
-                let target_mac = packet_arp.get_sender_hw_addr();
-                let target_man = oui_db
-                    .lookup_by_mac(&target_mac.to_string())
-                    .ok()
-                    .flatten()
-                    .map(|entry| entry.company_name.to_string());
-
-                devices.push(NetDevice {
-                    ip_addr: target_ip,
-                    mac_addr: target_mac,
-                    manufacturer: target_man,
-                });
-
-                break;
+    let mut devices: Vec<NetDevice> = vec![];
+    let start_time = Instant::now();
+    while start_time.elapsed() < Duration::from_secs(10) {
+        if let Ok(packet) = rx.next() {
+            // println!("got a packet. investigating...");
+            let packet_eth = EthernetPacket::new(packet)
+                .expect("could not create ethernet packet from incoming rx packet.");
+            if packet_eth.get_ethertype() != EtherTypes::Arp {
+                // println!("packet is not ARP. skipping...");
+                continue;
             }
+
+            println!("got an ARP packet! checking if it's a reply...");
+            let packet_arp = ArpPacket::new(packet_eth.payload())
+                .expect("could not create arp packet from incoming rx packet.");
+            if packet_arp.get_operation() != ArpOperations::Reply {
+                println!("it's not a reply :( skipping...");
+                continue;
+            }
+
+            println!("it's a reply :D adding device...");
+            let target_ip = packet_arp.get_sender_proto_addr();
+            if target_ip == net_access.local_ip {
+                continue;
+            }
+
+            let target_mac = packet_arp.get_sender_hw_addr();
+            let target_man = oui_db
+                .lookup_by_mac(&target_mac.to_string())
+                .ok()
+                .flatten()
+                .map(|entry| entry.company_name.to_string());
+
+            devices.push(NetDevice {
+                ip_addr: target_ip,
+                mac_addr: target_mac,
+                manufacturer: target_man,
+            });
         }
     }
 
@@ -176,8 +179,8 @@ fn send_arp_request(net_access: &NetAccess, target_ip: Ipv4Addr, tx: &mut Box<dy
     arp_packet_builder.set_target_hw_addr(MacAddr::zero());
     arp_packet_builder.set_target_proto_addr(target_ip);
 
-    eth_packet_builder.set_payload(&arp_buffer);
-    tx.send_to(eth_packet_builder.packet_mut(), None);
+    eth_packet_builder.set_payload(arp_packet_builder.packet());
+    tx.send_to(eth_packet_builder.packet(), None);
 }
 
 fn print_devices(devices: &Vec<NetDevice>) {
