@@ -1,157 +1,195 @@
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    time::{Duration, Instant},
+};
+
 use clap::Parser;
 use mac_oui::Oui;
-use pnet::datalink::{self, NetworkInterface};
-use pnet::packet::MutablePacket;
-use pnet::packet::arp::{ArpHardwareTypes, ArpOperations, ArpPacket, MutableArpPacket};
-use pnet::packet::ethernet::{EtherTypes, MutableEthernetPacket};
-use pnet::util::MacAddr;
-use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr};
-use std::time::{Duration, Instant};
-use tokio::net::TcpStream;
-use tokio::time::error;
+use pnet::{
+    datalink::{self, DataLinkReceiver, DataLinkSender, NetworkInterface},
+    packet::{
+        MutablePacket,
+        arp::{ArpHardwareTypes, ArpOperations, MutableArpPacket},
+        ethernet::{EtherTypes, MutableEthernetPacket},
+    },
+    util::MacAddr,
+};
 
 #[derive(Parser)]
 struct Args {
-    #[arg(short, long, default_value = "192.168.1.0/24")]
+    #[arg(short, long, default_value = "192.168.0.0/24")]
     network: String,
 }
 
-#[derive(Debug, Clone)]
-struct Device {
-    ip: Ipv4Addr,
-    mac: MacAddr,
+struct NetAccess {
+    interface: NetworkInterface,
+    local_ip: Ipv4Addr,
+    local_mac: MacAddr,
+}
+
+struct NetDevice {
+    ip_addr: Ipv4Addr,
+    mac_addr: MacAddr,
     manufacturer: Option<String>,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     let args = Args::parse();
 
-    let interfaces = datalink::interfaces();
-    let interface = interfaces
-        .into_iter()
-        .find(|ifa| ifa.is_up() && !ifa.is_loopback() && ifa.ips.iter().any(|ip| ip.is_ipv4()))
-        .ok_or("No interface found.")?;
-
-    let local_ip = match interface.ips.iter().find(|ip| ip.is_ipv4()).unwrap().ip() {
-        IpAddr::V4(ipv4) => ipv4,
-        _ => return Err("Local IP is not IPv4.".into()),
-    };
-    let local_mac = interface.mac.unwrap_or(MacAddr::zero());
-
+    let net_access = get_net_access().expect("could not establish net access.");
     println!(
-        "scanning network on interface: {} [ip: {}]",
-        interface.name, local_ip
+        "will scan network on interface \"{}\" [ip: {}]",
+        net_access.interface.name, net_access.local_ip
     );
 
-    let (network, prefix) = parse_cidr(&args.network)?;
-    let devices = scan_network(&interface, local_ip, local_mac, network, prefix).await?;
-
-    
-
-    Ok(())
+    let devices = scan_network(&net_access, &args.network).expect("could not scan network.");
+    print_devices(&devices);
 }
 
-fn parse_cidr(cidr: &str) -> Result<(Ipv4Addr, u32), Box<dyn std::error::Error>> {
-    let parts: Vec<&str> = cidr.split('/').collect();
+fn get_net_access() -> Result<NetAccess, Box<dyn std::error::Error>> {
+    let all = datalink::interfaces();
+
+    let ipv4_iface = all
+        .into_iter()
+        .find(|i| i.is_up() && !i.is_loopback() && i.ips.iter().any(|ip| ip.is_ipv4()))
+        .ok_or("no ipv4 interface found!")?;
+
+    let local_ip = match ipv4_iface.ips.iter().find(|ip| ip.is_ipv4()).unwrap().ip() {
+        IpAddr::V4(ipv4) => ipv4,
+        _ => return Err("local ip is somehow not v4".into()),
+    };
+
+    let local_mac = ipv4_iface.mac.unwrap_or(MacAddr::zero());
+
+    Ok(NetAccess {
+        interface: ipv4_iface,
+        local_ip,
+        local_mac,
+    })
+}
+
+fn parse_cidr(addr: &str) -> Result<(Ipv4Addr, u32), Box<dyn std::error::Error>> {
+    let parts: Vec<&str> = addr.split('/').collect();
     if parts.len() != 2 {
-        return Err("invalid CIDR".into());
+        return Err("cannot parse provided network address.".into());
     }
 
     let ip: Ipv4Addr = parts[0].parse()?;
-    let prefix: u32 = parts[1].parse()?;
+    let mask: u32 = parts[1].parse()?;
 
-    Ok((ip, prefix))
+    Ok((ip, mask))
 }
 
-async fn scan_network(
-    interface: &NetworkInterface,
-    local_ip: Ipv4Addr,
-    local_mac: MacAddr,
-    network: Ipv4Addr,
-    prefix: u32,
-) -> Result<Vec<Device>, Box<dyn std::error::Error>> {
-    let channel = datalink::channel(interface, Default::default())?;
-    let (mut tx, mut rx) = match channel {
-        datalink::Channel::Ethernet(tx, rx) => (tx, rx),
-        _ => return Err("unsupported channel type".into()),
-    };
+fn scan_network(
+    net_access: &NetAccess,
+    network_addr: &str,
+) -> Result<Vec<NetDevice>, Box<dyn std::error::Error>> {
+    let (network, subnet_mask) = parse_cidr(network_addr)?;
+    let (mut tx, mut rx) = get_transmission_channels(&net_access.interface)?;
 
-    let mut devices: Vec<Device> = vec![];
     let oui_db = Oui::default()?;
 
-    let num_hosts = (1u32 << (32 - prefix)) - 2; // exclude network/broadcast
+    let num_hosts = (1u32 << (32 - subnet_mask)) - 2; // exclude network/broadcast
     let network_u32 = u32::from(network);
+
+    let mut devices: Vec<NetDevice> = vec![];
 
     for i in 1..num_hosts {
         let target_ip_u32 = network_u32 + i;
         let target_ip = Ipv4Addr::from(target_ip_u32);
 
-        if target_ip == local_ip {
+        if target_ip == net_access.local_ip {
             continue;
         }
 
-        // setup ethernet "carrier" packet.
-        let mut ethernet_buffer = [0u8, 42];
-        let mut ethernet_packet = MutableEthernetPacket::new(&mut ethernet_buffer).unwrap();
-        ethernet_packet.set_destination(MacAddr::broadcast());
-        ethernet_packet.set_source(local_mac);
-        ethernet_packet.set_ethertype(EtherTypes::Arp);
+        println!("sending arp request to {}", target_ip);
+        send_arp_request(net_access, target_ip, &mut tx);
 
-        // setup arp payload for the ethernet packet.
-        let mut arp_buffer = [0u8, 28];
-        let mut arp_packet = MutableArpPacket::new(&mut arp_buffer).unwrap();
-        arp_packet.set_hardware_type(ArpHardwareTypes::Ethernet);
-        arp_packet.set_protocol_type(EtherTypes::Ipv4);
-        arp_packet.set_hw_addr_len(6);
-        arp_packet.set_proto_addr_len(4);
-        arp_packet.set_operation(ArpOperations::Request);
-        arp_packet.set_sender_hw_addr(local_mac);
-        arp_packet.set_sender_proto_addr(local_ip);
-        arp_packet.set_target_hw_addr(MacAddr::zero());
-        arp_packet.set_target_proto_addr(target_ip);
-
-        ethernet_packet.set_payload(&arp_buffer);
-
-        // send packet.
-        tx.send_to(ethernet_packet.packet_mut(), None);
-
-        // listen for a reply
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(1) {
+        let start_time = Instant::now();
+        while start_time.elapsed() < Duration::from_secs(1) {
             if let Ok(packet) = rx.next() {
-                let ethernet = pnet::packet::ethernet::EthernetPacket::new(packet).unwrap();
-                if ethernet.get_ethertype() == EtherTypes::Arp {
-                    let arp = pnet::packet::arp::ArpPacket::new(packet).unwrap();
-                    if arp.get_operation() == ArpOperations::Reply
-                        && arp.get_sender_proto_addr() == target_ip
-                    {
-                        let sender_hw_addr = arp.get_sender_hw_addr();
-                        // let mac = MacAddr::new(
-                        //     arp.get_sender_hw_addr()[0],
-                        //     arp.get_sender_hw_addr()[1],
-                        //     arp.get_sender_hw_addr()[2],
-                        //     arp.get_sender_hw_addr()[3],
-                        //     arp.get_sender_hw_addr()[4],
-                        //     arp.get_sender_hw_addr()[5]
-                        // );
-                        let manufacturer = oui_db
-                            .lookup_by_mac(&sender_hw_addr.to_string())
-                            .ok()
-                            .flatten()
-                            .map(|entry| entry.company_name.clone());
-                        devices.push(Device {
-                            ip: target_ip,
-                            mac: sender_hw_addr,
-                            manufacturer,
-                        });
-                        break;
-                    }
+                // println!("got a packet. investigating...");
+                let packet_eth = pnet::packet::ethernet::EthernetPacket::new(packet)
+                    .expect("could not create ethernet packet from incoming rx packet.");
+                if packet_eth.get_ethertype() != EtherTypes::Arp {
+                    // println!("packet is not ARP. skipping...");
+                    continue;
                 }
+
+                println!("got an ARP packet! checking if it's a reply...");
+                let packet_arp = pnet::packet::arp::ArpPacket::new(packet)
+                    .expect("could not create arp packet from incoming rx packet.");
+                if packet_arp.get_operation() != ArpOperations::Reply {
+                    println!("it's not a reply :( skipping...");
+                    continue;
+                }
+
+                println!("it's a reply :D adding device...");
+                let target_mac = packet_arp.get_sender_hw_addr();
+                let target_man = oui_db
+                    .lookup_by_mac(&target_mac.to_string())
+                    .ok()
+                    .flatten()
+                    .map(|entry| entry.company_name.to_string());
+
+                devices.push(NetDevice {
+                    ip_addr: target_ip,
+                    mac_addr: target_mac,
+                    manufacturer: target_man,
+                });
+
+                break;
             }
         }
     }
 
     Ok(devices)
+}
+
+fn get_transmission_channels(
+    interface: &NetworkInterface,
+) -> Result<(Box<dyn DataLinkSender>, Box<dyn DataLinkReceiver>), Box<dyn std::error::Error>> {
+    let def_channel = datalink::channel(interface, Default::default())?;
+
+    match def_channel {
+        datalink::Channel::Ethernet(tx, rx) => Ok((tx, rx)),
+        _ => Err("unsupported transmission channel type.".into()),
+    }
+}
+
+fn send_arp_request(net_access: &NetAccess, target_ip: Ipv4Addr, tx: &mut Box<dyn DataLinkSender>) {
+    let mut ethernet_buffer = [0u8; 42];
+    let mut eth_packet_builder = MutableEthernetPacket::new(&mut ethernet_buffer).unwrap();
+    eth_packet_builder.set_destination(MacAddr::broadcast());
+    eth_packet_builder.set_source(net_access.local_mac);
+    eth_packet_builder.set_ethertype(EtherTypes::Arp);
+
+    let mut arp_buffer = [0u8; 28];
+    let mut arp_packet_builder = MutableArpPacket::new(&mut arp_buffer).unwrap();
+    arp_packet_builder.set_hardware_type(ArpHardwareTypes::Ethernet);
+    arp_packet_builder.set_protocol_type(EtherTypes::Ipv4);
+    arp_packet_builder.set_hw_addr_len(6);
+    arp_packet_builder.set_proto_addr_len(4);
+    arp_packet_builder.set_operation(ArpOperations::Request);
+    arp_packet_builder.set_sender_hw_addr(net_access.local_mac);
+    arp_packet_builder.set_sender_proto_addr(net_access.local_ip);
+    arp_packet_builder.set_target_hw_addr(MacAddr::zero());
+    arp_packet_builder.set_target_proto_addr(target_ip);
+
+    eth_packet_builder.set_payload(&arp_buffer);
+    tx.send_to(eth_packet_builder.packet_mut(), None);
+}
+
+fn print_devices(devices: &Vec<NetDevice>) {
+    println!("found {} devices on network:", devices.len());
+    for (i, device) in devices.iter().enumerate() {
+        let man_name = device
+            .manufacturer
+            .as_ref()
+            .map_or("UNKNOWN", |s| s.as_str());
+        println!(
+            "{}. ip:{}, mac:{}, man:{}",
+            i, device.ip_addr, device.mac_addr, man_name
+        );
+    }
 }
