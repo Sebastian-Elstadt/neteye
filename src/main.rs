@@ -102,7 +102,7 @@ fn scan_network(
         }
 
         send_arp_request(net_access, target_ip, &mut tx);
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(10)); // increasing from 500 nanoseconds to 10ms made a massive difference.
     }
 
     let mut devices: Vec<NetDevice> = vec![];
@@ -130,7 +130,7 @@ fn scan_network(
                 continue;
             }
 
-            println!("got ARP reply. adding device...");
+            println!("got ARP reply. adding device..."); // for some reason, making this line "print!" instead of "println!" causes me to detect almost no devices.
 
             let target_mac = packet_arp.get_sender_hw_addr();
             let target_man = oui_db
@@ -146,14 +146,21 @@ fn scan_network(
             });
         }
     }
-
+    
     Ok(devices)
 }
 
 fn get_transmission_channels(
     interface: &NetworkInterface,
 ) -> Result<(Box<dyn DataLinkSender>, Box<dyn DataLinkReceiver>), Box<dyn std::error::Error>> {
-    let def_channel = datalink::channel(interface, Default::default())?;
+    // let def_channel = datalink::channel(interface, Default::default())?;
+    let def_channel = datalink::channel(
+        interface,
+        datalink::Config {
+            promiscuous: true,
+            ..Default::default()
+        },
+    )?;
 
     match def_channel {
         datalink::Channel::Ethernet(tx, rx) => Ok((tx, rx)),
@@ -185,7 +192,7 @@ fn send_arp_request(net_access: &NetAccess, target_ip: Ipv4Addr, tx: &mut Box<dy
 }
 
 fn print_devices(devices: &Vec<NetDevice>) {
-    println!("found {} devices on network:", devices.len());
+    println!("\nfound {} devices on network:", devices.len());
     for (i, device) in devices.iter().enumerate() {
         let man_name = device
             .manufacturer
@@ -193,7 +200,10 @@ fn print_devices(devices: &Vec<NetDevice>) {
             .map_or("UNKNOWN", |s| s.as_str());
         println!(
             "{}. ip:{}, mac:{}, man:{}",
-            i, device.ip_addr, device.mac_addr, man_name
+            i + 1,
+            device.ip_addr,
+            device.mac_addr,
+            man_name
         );
     }
 }
