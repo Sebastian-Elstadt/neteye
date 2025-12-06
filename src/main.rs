@@ -1,5 +1,7 @@
 use std::{
+    collections::HashSet,
     net::{IpAddr, Ipv4Addr},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -10,7 +12,16 @@ use pnet::{
     packet::{
         Packet,
         arp::{ArpHardwareTypes, ArpOperations, ArpPacket, MutableArpPacket},
-        ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket},
+        ethernet::{
+            EtherTypes::{self},
+            EthernetPacket, MutableEthernetPacket,
+        },
+        ip::IpNextHeaderProtocols,
+        ipv4::MutableIpv4Packet,
+        tcp::{MutableTcpPacket, TcpFlags, ipv4_checksum},
+    },
+    transport::{
+        self, TransportChannelType::Layer3, TransportReceiver, TransportSender, transport_channel,
     },
     util::MacAddr,
 };
@@ -44,6 +55,31 @@ fn main() {
 
     let devices = scan_network(&net_access, &args.network).expect("could not scan network.");
     print_devices(&devices);
+
+    loop {
+        println!("Enter a device number to scan its ports:");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).unwrap_or_else(|e| {
+            eprintln!("failed to parse input: {}", e);
+            0
+        });
+
+        let input = input.trim();
+        if input.is_empty() {
+            continue;
+        }
+
+        if input == "q" {
+            break;
+        }
+
+        if let Ok(index) = input.parse::<usize>() {
+            scan_device_ports(&net_access, &devices[index - 1], vec![22, 80, 443, 8080])
+                .unwrap_or_else(|e| {
+                    eprint!("failed to scan device ports: {}", e);
+                });
+        }
+    }
 }
 
 fn get_net_access() -> Result<NetAccess, Box<dyn std::error::Error>> {
@@ -85,7 +121,7 @@ fn scan_network(
     network_addr: &str,
 ) -> Result<Vec<NetDevice>, Box<dyn std::error::Error>> {
     let (network, subnet_mask) = parse_cidr(network_addr)?;
-    let (mut tx, mut rx) = get_transmission_channels(&net_access.interface)?;
+    let (mut tx, mut rx) = get_datalink_channels(&net_access.interface)?;
 
     let oui_db = Oui::default()?;
 
@@ -146,11 +182,11 @@ fn scan_network(
             });
         }
     }
-    
+
     Ok(devices)
 }
 
-fn get_transmission_channels(
+fn get_datalink_channels(
     interface: &NetworkInterface,
 ) -> Result<(Box<dyn DataLinkSender>, Box<dyn DataLinkReceiver>), Box<dyn std::error::Error>> {
     // let def_channel = datalink::channel(interface, Default::default())?;
@@ -206,4 +242,85 @@ fn print_devices(devices: &Vec<NetDevice>) {
             man_name
         );
     }
+}
+
+fn get_transport_channels(
+    buffer_size: usize,
+) -> Result<(TransportSender, TransportReceiver), Box<dyn std::error::Error>> {
+    transport_channel(buffer_size, Layer3(IpNextHeaderProtocols::Tcp)).map_err(|e| e.into())
+}
+
+fn scan_device_ports(
+    net_access: &NetAccess,
+    device: &NetDevice,
+    port_range: Vec<u16>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (mut tx, mut rx) = get_transport_channels(65536)?;
+
+    let (open_tx, open_rx) = std::sync::mpsc::channel();
+
+    thread::spawn(move || {
+        let mut iter = transport::tcp_packet_iter(&mut rx);
+        let mut ports = HashSet::new();
+
+        while let Ok((tcp_packet, _)) = iter.next() {
+            let src_port = tcp_packet.get_source();
+            let flags = tcp_packet.get_flags();
+
+            if flags == (TcpFlags::SYN | TcpFlags::ACK) && ports.insert(src_port) {
+                println!("+> port {} is open.", src_port);
+                let _ = open_tx.send(src_port);
+            }
+        }
+    });
+
+    for port in port_range {
+        let mut tcp_buffer = [0u8; 40];
+        let mut tcp_packet_builder = MutableTcpPacket::new(&mut tcp_buffer).unwrap();
+        tcp_packet_builder.set_source(40000 + (port % 1000));
+        tcp_packet_builder.set_destination(port);
+        tcp_packet_builder.set_sequence(12345);
+        tcp_packet_builder.set_acknowledgement(0);
+        tcp_packet_builder.set_data_offset(10); // 40 bytes
+        tcp_packet_builder.set_flags(TcpFlags::SYN);
+        tcp_packet_builder.set_window(64240);
+        tcp_packet_builder.set_urgent_ptr(0);
+        // tcp_packet.set_options(&[
+        //     2, 4, 5, 180, // MSS = 1460
+        //     1,   // NOP
+        //     3, 3, 10, // Window scale
+        // ]);
+
+        let mut ip_buffer = [0u8; 60];
+        let mut ip_packet_builder = MutableIpv4Packet::new(&mut ip_buffer).unwrap();
+        ip_packet_builder.set_version(4);
+        ip_packet_builder.set_header_length(5);
+        ip_packet_builder.set_total_length(60);
+        ip_packet_builder.set_ttl(64);
+        ip_packet_builder.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
+        ip_packet_builder.set_source(net_access.local_ip);
+        ip_packet_builder.set_destination(device.ip_addr);
+        ip_packet_builder.set_payload(tcp_packet_builder.packet());
+
+        let checksum = ipv4_checksum(
+            &tcp_packet_builder.to_immutable(),
+            &net_access.local_ip,
+            &device.ip_addr,
+        );
+        tcp_packet_builder.set_checksum(checksum);
+        ip_packet_builder.set_payload(tcp_packet_builder.packet());
+
+        if tx.send_to(ip_packet_builder, IpAddr::V4(device.ip_addr)).is_err() {
+            break;
+        }
+
+        thread::sleep(Duration::from_micros(500));
+    }
+
+    thread::sleep(Duration::from_secs(3));
+
+    println!("Scan finished.");
+    println!("Open ports: {:?}", open_rx.try_iter().collect::<Vec<_>>());
+
+    Ok(())
 }
