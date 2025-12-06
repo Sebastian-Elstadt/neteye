@@ -102,7 +102,7 @@ fn scan_network(
         }
 
         send_arp_request(net_access, target_ip, &mut tx);
-        std::thread::sleep(Duration::from_micros(500));
+        std::thread::sleep(Duration::from_millis(10));
     }
 
     let mut devices: Vec<NetDevice> = vec![];
@@ -117,19 +117,20 @@ fn scan_network(
                 continue;
             }
 
-            println!("got an ARP packet! checking if it's a reply...");
+            // println!("got an ARP packet! checking if it's a reply...");
             let packet_arp = ArpPacket::new(packet_eth.payload())
                 .expect("could not create arp packet from incoming rx packet.");
             if packet_arp.get_operation() != ArpOperations::Reply {
-                println!("it's not a reply :( skipping...");
+                // println!("it's not a reply :( skipping...");
                 continue;
             }
 
-            println!("it's a reply :D adding device...");
             let target_ip = packet_arp.get_sender_proto_addr();
             if target_ip == net_access.local_ip {
                 continue;
             }
+
+            println!("got ARP reply. adding device...");
 
             let target_mac = packet_arp.get_sender_hw_addr();
             let target_man = oui_db
