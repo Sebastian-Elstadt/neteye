@@ -1,6 +1,10 @@
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -18,7 +22,7 @@ use pnet::{
         },
         ip::IpNextHeaderProtocols,
         ipv4::MutableIpv4Packet,
-        tcp::{MutableTcpPacket, TcpFlags, ipv4_checksum},
+        tcp::{MutableTcpPacket, TcpFlags, TcpOption, ipv4_checksum},
     },
     transport::{
         self, TransportChannelType::Layer3, TransportReceiver, TransportSender, transport_channel,
@@ -54,10 +58,10 @@ fn main() {
     );
 
     let devices = scan_network(&net_access, &args.network).expect("could not scan network.");
-    print_devices(&devices);
 
     loop {
-        println!("Enter a device number to scan its ports:");
+        print_devices(&devices);
+        println!("\nEnter a device number to scan its ports:");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).unwrap_or_else(|e| {
             eprintln!("failed to parse input: {}", e);
@@ -74,10 +78,9 @@ fn main() {
         }
 
         if let Ok(index) = input.parse::<usize>() {
-            scan_device_ports(&net_access, &devices[index - 1], vec![22, 80, 443, 8080])
-                .unwrap_or_else(|e| {
-                    eprint!("failed to scan device ports: {}", e);
-                });
+            scan_device_ports(&net_access, &devices[index - 1], vec![]).unwrap_or_else(|e| {
+                eprint!("failed to scan device ports: {}", e);
+            });
         }
     }
 }
@@ -166,7 +169,7 @@ fn scan_network(
                 continue;
             }
 
-            println!("got ARP reply. adding device..."); // for some reason, making this line "print!" instead of "println!" causes me to detect almost no devices.
+            println!("+> device {} detected.", target_ip); // for some reason, making this line "print!" instead of "println!" causes me to detect almost no devices.
 
             let target_mac = packet_arp.get_sender_hw_addr();
             let target_man = oui_db
@@ -257,70 +260,119 @@ fn scan_device_ports(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut tx, mut rx) = get_transport_channels(65536)?;
 
-    let (open_tx, open_rx) = std::sync::mpsc::channel();
+    let (ports_tx, ports_rx) = std::sync::mpsc::channel::<u16>();
+    let sent_all_packets = Arc::new(AtomicBool::new(false));
+    let sent_all_packets_clone = sent_all_packets.clone();
 
     thread::spawn(move || {
         let mut iter = transport::tcp_packet_iter(&mut rx);
         let mut ports = HashSet::new();
 
-        while let Ok((tcp_packet, _)) = iter.next() {
-            let src_port = tcp_packet.get_source();
-            let flags = tcp_packet.get_flags();
+        let timeout = Duration::from_secs(12);
+        let mut start_time: Option<Instant> = None;
 
-            if flags == (TcpFlags::SYN | TcpFlags::ACK) && ports.insert(src_port) {
-                println!("+> port {} is open.", src_port);
-                let _ = open_tx.send(src_port);
+        loop {
+            let sent_all_packets = sent_all_packets_clone.load(Ordering::Relaxed);
+            if sent_all_packets && start_time.is_none() {
+                start_time.replace(Instant::now());
             }
-        }
-    });
 
-    for port in port_range {
-        let mut tcp_buffer = [0u8; 40];
-        let mut tcp_packet_builder = MutableTcpPacket::new(&mut tcp_buffer).unwrap();
-        tcp_packet_builder.set_source(40000 + (port % 1000));
-        tcp_packet_builder.set_destination(port);
-        tcp_packet_builder.set_sequence(12345);
-        tcp_packet_builder.set_acknowledgement(0);
-        tcp_packet_builder.set_data_offset(10); // 40 bytes
-        tcp_packet_builder.set_flags(TcpFlags::SYN);
-        tcp_packet_builder.set_window(64240);
-        tcp_packet_builder.set_urgent_ptr(0);
-        // tcp_packet.set_options(&[
-        //     2, 4, 5, 180, // MSS = 1460
-        //     1,   // NOP
-        //     3, 3, 10, // Window scale
-        // ]);
+            if sent_all_packets && start_time.unwrap().elapsed() >= timeout {
+                break;
+            }
 
-        let mut ip_buffer = [0u8; 60];
-        let mut ip_packet_builder = MutableIpv4Packet::new(&mut ip_buffer).unwrap();
-        ip_packet_builder.set_version(4);
-        ip_packet_builder.set_header_length(5);
-        ip_packet_builder.set_total_length(60);
-        ip_packet_builder.set_ttl(64);
-        ip_packet_builder.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
-        ip_packet_builder.set_source(net_access.local_ip);
-        ip_packet_builder.set_destination(device.ip_addr);
-        ip_packet_builder.set_payload(tcp_packet_builder.packet());
+            if let Ok((tcp_packet, _)) = iter.next() {
+                let src_port = tcp_packet.get_source();
+                let flags = tcp_packet.get_flags();
 
-        let checksum = ipv4_checksum(
-            &tcp_packet_builder.to_immutable(),
-            &net_access.local_ip,
-            &device.ip_addr,
-        );
-        tcp_packet_builder.set_checksum(checksum);
-        ip_packet_builder.set_payload(tcp_packet_builder.packet());
+                if flags == (TcpFlags::SYN | TcpFlags::ACK) && ports.insert(src_port) {
+                    println!("+> port {} is open.", src_port);
+                    let _ = ports_tx.send(src_port);
+                }
 
-        if tx.send_to(ip_packet_builder, IpAddr::V4(device.ip_addr)).is_err() {
+                continue;
+            }
+
             break;
         }
 
-        thread::sleep(Duration::from_micros(500));
+        println!("stopped listening for port responses.");
+    });
+
+    if port_range.len() > 0 {
+        println!(
+            "scanning for ports (given range: {} ports)...",
+            port_range.len()
+        );
+        for port in port_range {
+            let _ = send_port_ip_packet(&net_access, &mut tx, &device.ip_addr, port);
+            thread::sleep(Duration::from_micros(500));
+        }
+    } else {
+        println!("scanning for all ports...");
+        for port in 1..65535 {
+            let _ = send_port_ip_packet(&net_access, &mut tx, &device.ip_addr, port);
+            thread::sleep(Duration::from_micros(500));
+        }
+
+        println!("packets sent to all ports.");
     }
 
-    thread::sleep(Duration::from_secs(3));
+    sent_all_packets.store(true, Ordering::Relaxed);
+    thread::sleep(Duration::from_secs(10));
 
-    println!("Scan finished.");
-    println!("Open ports: {:?}", open_rx.try_iter().collect::<Vec<_>>());
+    println!("port scan complete.");
+    println!(
+        "\nopen ports: {:?}",
+        ports_rx.try_iter().collect::<Vec<_>>()
+    );
 
     Ok(())
+}
+
+fn send_port_ip_packet(
+    net_access: &NetAccess,
+    tx: &mut TransportSender,
+    target_ip: &Ipv4Addr,
+    port: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut tcp_buffer = [0u8; 40];
+    let mut tcp_packet_builder = MutableTcpPacket::new(&mut tcp_buffer).unwrap();
+    tcp_packet_builder.set_source(40000 + (port % 1000));
+    tcp_packet_builder.set_destination(port);
+    tcp_packet_builder.set_sequence(12345);
+    tcp_packet_builder.set_acknowledgement(0);
+    tcp_packet_builder.set_data_offset(10); // 40 bytes
+    tcp_packet_builder.set_flags(TcpFlags::SYN);
+    tcp_packet_builder.set_window(64240);
+    tcp_packet_builder.set_urgent_ptr(0);
+    tcp_packet_builder.set_options(&[
+        TcpOption::mss(1460),  // 2, 4, 5, 180 -> kind=2, len=4, value=1460
+        TcpOption::nop(),      // 1
+        TcpOption::wscale(10), // 3, 3, 10 -> kind=3, len=3, shift=10
+    ]);
+
+    let mut ip_buffer = [0u8; 60];
+    let mut ip_packet_builder = MutableIpv4Packet::new(&mut ip_buffer).unwrap();
+    ip_packet_builder.set_version(4);
+    ip_packet_builder.set_header_length(5);
+    ip_packet_builder.set_total_length(60);
+    ip_packet_builder.set_ttl(64);
+    ip_packet_builder.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
+    ip_packet_builder.set_source(net_access.local_ip);
+    ip_packet_builder.set_destination(*target_ip);
+    ip_packet_builder.set_payload(tcp_packet_builder.packet());
+
+    let checksum = ipv4_checksum(
+        &tcp_packet_builder.to_immutable(),
+        &net_access.local_ip,
+        target_ip,
+    );
+    tcp_packet_builder.set_checksum(checksum);
+    ip_packet_builder.set_payload(tcp_packet_builder.packet());
+
+    match tx.send_to(ip_packet_builder, IpAddr::V4(*target_ip)) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(Box::new(e) as Box<dyn std::error::Error>),
+    }
 }
