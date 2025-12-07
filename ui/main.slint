@@ -1,0 +1,60 @@
+import { LineEdit, Button } from "std-widgets.slint";
+
+export component AppWindow inherits Window {
+    title: "NETEYE";
+    width: 800px;
+    height: 600px;
+
+    callback scan_ports(string);
+
+    Rectangle {
+        background: #2c3e50;
+    }
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 10px;
+        alignment: stretch;
+
+        Text {
+            text: "NETWORK:";
+            color: white;
+            font-size: 16px;
+        }
+
+        ip_input := LineEdit {
+            placeholder-text: "e.g., 192.168.0.0/24";
+            text: "192.168.0.0/24";
+        }
+
+        Button {
+            height: 40px;
+            text: "Scan Ports";
+            clicked => {
+                root.scan_ports(ip_input.text);
+            }
+        }
+
+        // Rectangle {
+        //     width: 100px;
+        //     height: 60px;
+        //     background: red;
+
+        //     TouchArea {
+        //         Text {
+        //             text: "Scan Ports";
+        //         }
+
+        //         clicked => {
+        //             root.scan_ports(ip_input.text);
+        //         }
+        //     }
+        // }
+
+        results_text := Text {
+            text: "Scan results will appear here...";
+            color: white;
+            vertical-stretch: 1;
+        }
+    }
+}

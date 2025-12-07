@@ -30,6 +30,8 @@ use pnet::{
     util::MacAddr,
 };
 
+slint::include_modules!();
+
 #[derive(Parser)]
 struct Args {
     #[arg(short, long, default_value = "192.168.0.0/24")]
@@ -49,7 +51,7 @@ struct NetDevice {
 }
 
 fn main() {
-    let args = Args::parse();
+    // let args = Args::parse();
 
     let net_access = get_net_access().expect("could not establish net access.");
     println!(
@@ -57,7 +59,17 @@ fn main() {
         net_access.interface.name, net_access.local_ip
     );
 
-    let devices = scan_network(&net_access, &args.network).expect("could not scan network.");
+    let ui = AppWindow::new().unwrap();
+
+    ui.on_scan_ports(move |net_addr: slint::SharedString| {
+        run_network_scan(&net_access, &net_addr);
+    });
+
+    ui.run().unwrap();
+}
+
+fn run_network_scan(net_access: &NetAccess, net_addr: &str) {
+    let devices = scan_network(net_access, net_addr).expect("could not scan network.");
 
     loop {
         print_devices(&devices);
