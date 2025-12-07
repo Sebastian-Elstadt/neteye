@@ -268,7 +268,7 @@ fn scan_device_ports(
         let mut iter = transport::tcp_packet_iter(&mut rx);
         let mut ports = HashSet::new();
 
-        let timeout = Duration::from_secs(12);
+        let timeout = Duration::from_secs(10);
         let mut start_time: Option<Instant> = None;
 
         loop {
@@ -305,13 +305,13 @@ fn scan_device_ports(
             port_range.len()
         );
         for port in port_range {
-            let _ = send_port_ip_packet(&net_access, &mut tx, &device.ip_addr, port);
+            let _ = send_port_ip_packet(net_access, &mut tx, device.ip_addr, port);
             thread::sleep(Duration::from_micros(500));
         }
     } else {
         println!("scanning for all ports...");
         for port in 1..65535 {
-            let _ = send_port_ip_packet(&net_access, &mut tx, &device.ip_addr, port);
+            let _ = send_port_ip_packet(net_access, &mut tx, device.ip_addr, port);
             thread::sleep(Duration::from_micros(500));
         }
 
@@ -333,7 +333,7 @@ fn scan_device_ports(
 fn send_port_ip_packet(
     net_access: &NetAccess,
     tx: &mut TransportSender,
-    target_ip: &Ipv4Addr,
+    target_ip: Ipv4Addr,
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut tcp_buffer = [0u8; 40];
@@ -360,18 +360,18 @@ fn send_port_ip_packet(
     ip_packet_builder.set_ttl(64);
     ip_packet_builder.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
     ip_packet_builder.set_source(net_access.local_ip);
-    ip_packet_builder.set_destination(*target_ip);
+    ip_packet_builder.set_destination(target_ip);
     ip_packet_builder.set_payload(tcp_packet_builder.packet());
 
     let checksum = ipv4_checksum(
         &tcp_packet_builder.to_immutable(),
         &net_access.local_ip,
-        target_ip,
+        &target_ip,
     );
     tcp_packet_builder.set_checksum(checksum);
     ip_packet_builder.set_payload(tcp_packet_builder.packet());
 
-    match tx.send_to(ip_packet_builder, IpAddr::V4(*target_ip)) {
+    match tx.send_to(ip_packet_builder, IpAddr::V4(target_ip)) {
         Ok(_) => Ok(()),
         Err(e) => Err(Box::new(e) as Box<dyn std::error::Error>),
     }
