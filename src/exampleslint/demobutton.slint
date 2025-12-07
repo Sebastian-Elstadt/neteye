@@ -1,0 +1,25 @@
+import { Styles } from "styles.slint";
+export component DemoButton {
+    width: btnText.width + (Styles.margin * 2);
+    height: btnText.height + (Styles.margin * 2);
+
+    in property <string> label;
+    callback clicked();
+    
+    Rectangle {
+        background: @linear-gradient(180deg, #00b8f0 0%, #98e7ff 100%);
+        border-radius: 10px;
+
+        btnText := Text {
+            text: label;
+            color: white;
+            font-size: 20px;
+        }
+
+        TouchArea {
+            clicked => {
+                root.clicked();
+            }
+        }
+    }
+}

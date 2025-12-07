@@ -1,0 +1,51 @@
+import { DemoButton } from "demobutton.slint";
+import { Styles } from "styles.slint";
+
+export component MainView {
+    width: 500px;
+    height: 500px;
+
+    property <int> count: 1;
+    property <int> image_cols: 4;
+    property <length> img_width: (self.width - (Styles.margin * (image_cols + 1))) / image_cols;
+
+    Rectangle {
+        border-width: 5px;
+        border-color: blue;
+        border-radius: 10px;
+    }
+
+    // Image {
+    //     x: Styles.margin;
+    //     y: Styles.margin;
+    //     source: @image-url("image.png");
+    //     width: root.width - (Styles.margin * 2);
+    // }
+
+    // for i in count: Image {
+    //     source: @image-url("image.png");
+    //     width: img_width;
+    //     x: Styles.margin + ((img_width + Styles.margin) * mod(i, 4));
+    //     y: Styles.margin + ((self.height + Styles.margin) * floor(i / 4));
+    // }
+
+    // this does load the image 5 times into memory from what I can see. pretty intensive.
+    for i in 5: Image { // for animations, the elements need to exist beforehand. animations cannot work on the example above.
+        source: @image-url("image.png");
+        width: img_width;
+        x: Styles.margin + ((img_width + Styles.margin) * mod(i, 4));
+        y: Styles.margin + ((self.height + Styles.margin) * floor(i / 4));
+        opacity: count > i + 1 ? 1 : 0;
+        transform-rotation: count > i + 1 ? 10deg : 0deg;
+
+        animate opacity, transform-rotation { duration: 500ms; }
+    }
+
+    DemoButton {
+        y: (root.height - self.height) / 2;
+        label: "click me (" + count + ")";
+        clicked => {
+            count += 1;
+        }
+    }
+}

@@ -7,3 +7,4 @@ edition = "2024"
 pnet = "0.35.0"
 mac_oui = { version = "0.4.11", features = ["with-db"] }
 clap = { version = "4.5.53", features = ["derive"] }
+slint = "1.14.1"
