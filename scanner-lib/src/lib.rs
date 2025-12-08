@@ -9,7 +9,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use clap::Parser;
 use mac_oui::Oui;
 use pnet::{
     datalink::{self, DataLinkReceiver, DataLinkSender, NetworkInterface},
@@ -30,74 +29,19 @@ use pnet::{
     util::MacAddr,
 };
 
-slint::include_modules!();
-
-#[derive(Parser)]
-struct Args {
-    #[arg(short, long, default_value = "192.168.0.0/24")]
-    network: String,
+pub struct NetAccess {
+    pub interface: NetworkInterface,
+    pub local_ip: Ipv4Addr,
+    pub local_mac: MacAddr,
 }
 
-struct NetAccess {
-    interface: NetworkInterface,
-    local_ip: Ipv4Addr,
-    local_mac: MacAddr,
+pub struct NetDevice {
+    pub ip_addr: Ipv4Addr,
+    pub mac_addr: MacAddr,
+    pub manufacturer: Option<String>,
 }
 
-struct NetDevice {
-    ip_addr: Ipv4Addr,
-    mac_addr: MacAddr,
-    manufacturer: Option<String>,
-}
-
-fn main() {
-    // let args = Args::parse();
-
-    let net_access = get_net_access().expect("could not establish net access.");
-    println!(
-        "will scan network on interface \"{}\" [ip: {}]",
-        net_access.interface.name, net_access.local_ip
-    );
-
-    let ui = AppWindow::new().unwrap();
-
-    ui.on_scan_ports(move |net_addr: slint::SharedString| {
-        run_network_scan(&net_access, &net_addr);
-    });
-
-    ui.run().unwrap();
-}
-
-fn run_network_scan(net_access: &NetAccess, net_addr: &str) {
-    let devices = scan_network(net_access, net_addr).expect("could not scan network.");
-
-    loop {
-        print_devices(&devices);
-        println!("\nEnter a device number to scan its ports:");
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input).unwrap_or_else(|e| {
-            eprintln!("failed to parse input: {}", e);
-            0
-        });
-
-        let input = input.trim();
-        if input.is_empty() {
-            continue;
-        }
-
-        if input == "q" {
-            break;
-        }
-
-        if let Ok(index) = input.parse::<usize>() {
-            scan_device_ports(&net_access, &devices[index - 1], vec![]).unwrap_or_else(|e| {
-                eprint!("failed to scan device ports: {}", e);
-            });
-        }
-    }
-}
-
-fn get_net_access() -> Result<NetAccess, Box<dyn std::error::Error>> {
+pub fn get_net_access() -> Result<NetAccess, Box<dyn std::error::Error>> {
     let all = datalink::interfaces();
 
     let ipv4_iface = all
@@ -131,7 +75,7 @@ fn parse_cidr(addr: &str) -> Result<(Ipv4Addr, u32), Box<dyn std::error::Error>>
     Ok((ip, mask))
 }
 
-fn scan_network(
+pub fn scan_network(
     net_access: &NetAccess,
     network_addr: &str,
 ) -> Result<Vec<NetDevice>, Box<dyn std::error::Error>> {
@@ -160,19 +104,15 @@ fn scan_network(
     let start_time = Instant::now();
     while start_time.elapsed() < Duration::from_secs(10) {
         if let Ok(packet) = rx.next() {
-            // println!("got a packet. investigating...");
             let packet_eth = EthernetPacket::new(packet)
                 .expect("could not create ethernet packet from incoming rx packet.");
             if packet_eth.get_ethertype() != EtherTypes::Arp {
-                // println!("packet is not ARP. skipping...");
                 continue;
             }
 
-            // println!("got an ARP packet! checking if it's a reply...");
             let packet_arp = ArpPacket::new(packet_eth.payload())
                 .expect("could not create arp packet from incoming rx packet.");
             if packet_arp.get_operation() != ArpOperations::Reply {
-                // println!("it's not a reply :( skipping...");
                 continue;
             }
 
@@ -242,30 +182,13 @@ fn send_arp_request(net_access: &NetAccess, target_ip: Ipv4Addr, tx: &mut Box<dy
     tx.send_to(eth_packet_builder.packet(), None);
 }
 
-fn print_devices(devices: &Vec<NetDevice>) {
-    println!("\nfound {} devices on network:", devices.len());
-    for (i, device) in devices.iter().enumerate() {
-        let man_name = device
-            .manufacturer
-            .as_ref()
-            .map_or("UNKNOWN", |s| s.as_str());
-        println!(
-            "{}. ip:{}, mac:{}, man:{}",
-            i + 1,
-            device.ip_addr,
-            device.mac_addr,
-            man_name
-        );
-    }
-}
-
 fn get_transport_channels(
     buffer_size: usize,
 ) -> Result<(TransportSender, TransportReceiver), Box<dyn std::error::Error>> {
     transport_channel(buffer_size, Layer3(IpNextHeaderProtocols::Tcp)).map_err(|e| e.into())
 }
 
-fn scan_device_ports(
+pub fn scan_device_ports(
     net_access: &NetAccess,
     device: &NetDevice,
     port_range: Vec<u16>,
@@ -388,3 +311,32 @@ fn send_port_ip_packet(
         Err(e) => Err(Box::new(e) as Box<dyn std::error::Error>),
     }
 }
+
+// fn run_network_scan(net_access: &NetAccess, net_addr: &str) {
+//     let devices = scan_network(net_access, net_addr).expect("could not scan network.");
+
+//     loop {
+//         print_devices(&devices);
+//         println!("\nEnter a device number to scan its ports:");
+//         let mut input = String::new();
+//         std::io::stdin().read_line(&mut input).unwrap_or_else(|e| {
+//             eprintln!("failed to parse input: {}", e);
+//             0
+//         });
+
+//         let input = input.trim();
+//         if input.is_empty() {
+//             continue;
+//         }
+
+//         if input == "q" {
+//             break;
+//         }
+
+//         if let Ok(index) = input.parse::<usize>() {
+//             scan_device_ports(&net_access, &devices[index - 1], vec![]).unwrap_or_else(|e| {
+//                 eprint!("failed to scan device ports: {}", e);
+//             });
+//         }
+//     }
+// }
