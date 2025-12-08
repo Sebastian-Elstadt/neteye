@@ -6,9 +6,10 @@ export component AppWindow inherits Window {
     height: 600px;
 
     callback scan_ports(string);
+    in-out property <string> scan_results: "Scan results will appear here...";
 
     Rectangle {
-        background: #2c3e50;
+        background: @linear-gradient(180deg, #000d1a 0%, #002d5a 100%);
     }
 
     VerticalLayout {
@@ -22,39 +23,46 @@ export component AppWindow inherits Window {
             font-size: 16px;
         }
 
-        ip_input := LineEdit {
-            placeholder-text: "e.g., 192.168.0.0/24";
-            text: "192.168.0.0/24";
-        }
+        HorizontalLayout {
+            spacing: 10px;
 
-        Button {
-            height: 40px;
-            text: "Scan Ports";
-            clicked => {
-                root.scan_ports(ip_input.text);
+            net_addr_input := LineEdit {
+                placeholder-text: "e.g., 192.168.0.0/24";
+                text: "192.168.0.0/24";
+            }
+
+            btn_scan := Rectangle {
+                background: #008cff;
+                height: 40px;
+                width: 100px;
+                border-radius: 4px;
+
+                TouchArea {
+                    mouse-cursor: pointer;
+
+                    Text {
+                        text: "SCAN";
+                        color: white;
+                        font-weight: 800;
+                    }
+
+                    clicked => {
+                        root.scan_ports(net_addr_input.text);
+                    }
+                }
             }
         }
 
-        // Rectangle {
-        //     width: 100px;
-        //     height: 60px;
-        //     background: red;
+        Rectangle {
+            background: #002d5a;
 
-        //     TouchArea {
-        //         Text {
-        //             text: "Scan Ports";
-        //         }
-
-        //         clicked => {
-        //             root.scan_ports(ip_input.text);
-        //         }
-        //     }
-        // }
-
-        results_text := Text {
-            text: "Scan results will appear here...";
-            color: white;
-            vertical-stretch: 1;
+            Text {
+                x: 8px;
+                y: 8px;
+                text: scan_results;
+                color: white;
+                vertical-stretch: 1;
+            }
         }
     }
 }
