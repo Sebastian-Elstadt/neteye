@@ -17,7 +17,7 @@ fn main() {
     print_devices(&devices);
 }
 
-fn print_devices(devices: &Vec<scanner_lib::NetDevice>) {
+fn print_devices(devices: &Vec<scanner_lib::models::NetDevice>) {
     println!("\nfound {} devices on network:", devices.len());
     for (i, device) in devices.iter().enumerate() {
         let man_name = device

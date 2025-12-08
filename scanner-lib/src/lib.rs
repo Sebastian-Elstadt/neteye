@@ -25,8 +25,8 @@ use pnet::{
     util::MacAddr,
 };
 
-mod models;
-mod utils;
+pub mod models;
+pub mod utils;
 
 use models::{NetAccess, NetDevice};
 use utils::{
