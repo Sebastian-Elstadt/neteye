@@ -18,18 +18,22 @@ fn main() {
 }
 
 fn print_devices(devices: &Vec<scanner_lib::models::NetDevice>) {
-    println!("\nfound {} devices on network:", devices.len());
-    for (i, device) in devices.iter().enumerate() {
-        let man_name = device
-            .manufacturer
-            .as_ref()
-            .map_or("UNKNOWN", |s| s.as_str());
-        println!(
-            "{}. ip:{}, mac:{}, man:{}",
-            i + 1,
-            device.ip_addr,
-            device.mac_addr,
-            man_name
-        );
-    }
+    // println!("\nfound {} devices on network:", devices.len());
+    // for (i, device) in devices.iter().enumerate() {
+    //     let man_name = device
+    //         .manufacturer
+    //         .as_ref()
+    //         .map_or("UNKNOWN", |s| s.as_str());
+    //     println!(
+    //         "{}. ip:{}, mac:{}, man:{}",
+    //         i + 1,
+    //         device.ip_addr,
+    //         device.mac_addr,
+    //         man_name
+    //     );
+    // }
+
+    // serialize to json
+    let devices_json = serde_json::to_string(devices).expect("could not serialize devices vector");
+    println!("{}", devices_json);
 }

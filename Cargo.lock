@@ -1927,6 +1927,9 @@ dependencies = [
 name = "gui"
 version = "0.1.0"
 dependencies = [
+ "scanner-lib",
+ "serde",
+ "serde_json",
  "slint",
  "slint-build",
 ]
@@ -4148,6 +4151,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "scanner-lib",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4156,6 +4161,7 @@ version = "0.1.0"
 dependencies = [
  "mac_oui",
  "pnet",
+ "serde",
 ]
 
 [[package]]

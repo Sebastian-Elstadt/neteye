@@ -17,7 +17,7 @@ fn main() {
 }
 
 fn run_network_scanner(app: &AppWindow, net_addr: &str) {
-    let output = Command::new("sudo")
+    let output = Command::new("pkexec")
         .arg("./target/debug/scanner") // Separate binary for raw socket logic
         .arg("-n")
         .arg(net_addr)

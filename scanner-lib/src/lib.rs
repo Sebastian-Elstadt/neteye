@@ -66,7 +66,7 @@ pub fn scan_network(
     let oui_db = Oui::default()?;
 
     let num_hosts = (1u32 << (32 - subnet_mask)) - 2; // exclude network/broadcast
-    println!("scanning {} hosts...", num_hosts);
+    // println!("scanning {} hosts...", num_hosts);
     let network_u32 = u32::from(network);
 
     for i in 1..=num_hosts {
@@ -102,7 +102,7 @@ pub fn scan_network(
                 continue;
             }
 
-            println!("+> device {} detected.", target_ip); // for some reason, making this line "print!" instead of "println!" causes me to detect almost no devices.
+            // println!("+> device {} detected.", target_ip); // for some reason, making this line "print!" instead of "println!" causes me to detect almost no devices.
 
             let target_mac = packet_arp.get_sender_hw_addr();
             let target_man = oui_db
@@ -155,7 +155,7 @@ pub fn scan_device_ports(
                 let flags = tcp_packet.get_flags();
 
                 if flags == (TcpFlags::SYN | TcpFlags::ACK) && ports.insert(src_port) {
-                    println!("+> port {} is open.", src_port);
+                    // println!("+> port {} is open.", src_port);
                     let _ = ports_tx.send(src_port);
                 }
 
@@ -165,36 +165,36 @@ pub fn scan_device_ports(
             break;
         }
 
-        println!("stopped listening for port responses.");
+        // println!("stopped listening for port responses.");
     });
 
     if port_range.len() > 0 {
-        println!(
-            "scanning for ports (given range: {} ports)...",
-            port_range.len()
-        );
+        // println!(
+        //     "scanning for ports (given range: {} ports)...",
+        //     port_range.len()
+        // );
         for port in port_range {
             let _ = send_port_ip_packet(net_access, &mut tx, device.ip_addr, port);
             thread::sleep(Duration::from_micros(500));
         }
     } else {
-        println!("scanning for all ports...");
+        // println!("scanning for all ports...");
         for port in 1..65535 {
             let _ = send_port_ip_packet(net_access, &mut tx, device.ip_addr, port);
             thread::sleep(Duration::from_micros(500));
         }
 
-        println!("packets sent to all ports.");
+        // println!("packets sent to all ports.");
     }
 
     sent_all_packets.store(true, Ordering::Relaxed);
     thread::sleep(Duration::from_secs(10));
 
-    println!("port scan complete.");
-    println!(
-        "\nopen ports: {:?}",
-        ports_rx.try_iter().collect::<Vec<_>>()
-    );
+    // println!("port scan complete.");
+    // println!(
+    //     "\nopen ports: {:?}",
+    //     ports_rx.try_iter().collect::<Vec<_>>()
+    // );
 
     Ok(())
 }
