@@ -129,7 +129,7 @@ pub fn scan_device_ports(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut tx, mut rx) = get_transport_channels(65536)?;
 
-    let (ports_tx, ports_rx) = std::sync::mpsc::channel::<u16>();
+    let (ports_tx, _) = std::sync::mpsc::channel::<u16>();
     let sent_all_packets = Arc::new(AtomicBool::new(false));
     let sent_all_packets_clone = sent_all_packets.clone();
 

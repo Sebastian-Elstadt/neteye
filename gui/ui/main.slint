@@ -1,6 +1,6 @@
 import { LineEdit, VerticalBox, StandardListView } from "std-widgets.slint";
 
-struct slint_NetDevice := {
+struct slint_NetDevice {
     ip_addr: string,
     mac_addr: string,
     manufacturer: string,
@@ -13,6 +13,7 @@ export component AppWindow inherits Window {
 
     callback scan_ports(string);
     in-out property <[slint_NetDevice]> devices;
+    in-out property <bool> is_scanning: false;
 
     Rectangle {
         background: @linear-gradient(180deg, #f1f1f1 0%, #f0f0f0 100%);
@@ -41,12 +42,14 @@ export component AppWindow inherits Window {
                 height: 40px;
                 width: 100px;
                 border-radius: 4px;
+                opacity: is_scanning ? 0.6 : 1;
 
                 btn_scan_touch := TouchArea {
-                    mouse-cursor: pointer;
+                    enabled: !is_scanning;
+                    mouse-cursor: is_scanning ? default : pointer;
 
                     Text {
-                        text: "SCAN";
+                        text: is_scanning ? "WAIT" : "SCAN";
                         color: white;
                         font-weight: 800;
                     }
@@ -64,28 +67,30 @@ export component AppWindow inherits Window {
                 height: 100%;
 
                 for dev[index] in devices: Rectangle {
-                    height: 50px;
+                    height: 100px;
                     background: mod(index, 2) == 0 ? #ffffff : #f5f5f5;
 
                     HorizontalLayout {
                         alignment: start;
                         padding: 10px;
 
-                        Text {
-                            text: dev.ip_addr;
-                            font-size: 20px;
-                        }
+                        VerticalLayout {
+                            Text {
+                                text: dev.ip_addr;
+                                font-size: 20px;
+                            }
 
-                        Text {
-                            text: "MAC: \{dev.mac_addr}";
-                            font-size: 15px;
-                            color: gray;
-                        }
+                            Text {
+                                text: "MAC: \{dev.mac_addr}";
+                                font-size: 15px;
+                                color: gray;
+                            }
 
-                        Text {
-                            text: "MAN: \{dev.manufacturer}";
-                            font-size: 15px;
-                            color: gray;
+                            Text {
+                                text: "MAN: \{dev.manufacturer}";
+                                font-size: 15px;
+                                color: gray;
+                            }
                         }
                     }
                 }
