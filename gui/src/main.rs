@@ -1,7 +1,9 @@
-// use std::io::{self, Write};
-use std::process::{Command, Stdio};
+use std::{
+    process::{Command, Stdio},
+    rc::Rc,
+};
 
-use slint::ToSharedString;
+use slint::{ToSharedString, VecModel};
 
 slint::include_modules!();
 
@@ -18,7 +20,7 @@ fn main() {
 
 fn run_network_scanner(app: &AppWindow, net_addr: &str) {
     let output = Command::new("pkexec")
-        .arg("./target/debug/scanner") // Separate binary for raw socket logic
+        .arg("./target/debug/scanner")
         .arg("-n")
         .arg(net_addr)
         .stdout(Stdio::piped())
@@ -27,6 +29,26 @@ fn run_network_scanner(app: &AppWindow, net_addr: &str) {
         .wait_with_output()
         .expect("failed to scan");
 
-    let results = String::from_utf8_lossy(&output.stdout).to_shared_string();
-    app.set_scan_results(results);
+    let results = String::from_utf8_lossy(&output.stdout);
+    let devices: Vec<scan_core::models::NetDevice> =
+        serde_json::from_str(&results).expect("could not deserialize net devices list.");
+
+    let devices_model = Rc::new(VecModel::from(
+        devices
+            .into_iter()
+            .map(|d| d.into())
+            .collect::<Vec<slint_NetDevice>>(),
+    ));
+
+    app.set_devices(devices_model.into());
+}
+
+impl From<scan_core::models::NetDevice> for slint_NetDevice {
+    fn from(val: scan_core::models::NetDevice) -> Self {
+        slint_NetDevice {
+            ip_addr: val.ip_addr.to_shared_string(),
+            mac_addr: val.mac_addr.to_shared_string(),
+            manufacturer: val.manufacturer.unwrap_or("UNKNOWN".into()).to_shared_string(),
+        }
+    }
 }

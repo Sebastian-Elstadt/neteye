@@ -1,4 +1,10 @@
-import { LineEdit, Button } from "std-widgets.slint";
+import { LineEdit, VerticalBox, StandardListView } from "std-widgets.slint";
+
+struct slint_NetDevice := {
+    ip_addr: string,
+    mac_addr: string,
+    manufacturer: string,
+}
 
 export component AppWindow inherits Window {
     title: "NETEYE";
@@ -6,10 +12,10 @@ export component AppWindow inherits Window {
     height: 600px;
 
     callback scan_ports(string);
-    in-out property <string> scan_results: "Scan results will appear here...";
+    in-out property <[slint_NetDevice]> devices;
 
     Rectangle {
-        background: @linear-gradient(180deg, #000d1a 0%, #002d5a 100%);
+        background: @linear-gradient(180deg, #f1f1f1 0%, #f0f0f0 100%);
     }
 
     VerticalLayout {
@@ -19,7 +25,6 @@ export component AppWindow inherits Window {
 
         Text {
             text: "NETWORK:";
-            color: white;
             font-size: 16px;
         }
 
@@ -32,12 +37,12 @@ export component AppWindow inherits Window {
             }
 
             btn_scan := Rectangle {
-                background: #008cff;
+                background: btn_scan_touch.pressed ? #007ade : #008cff;
                 height: 40px;
                 width: 100px;
                 border-radius: 4px;
 
-                TouchArea {
+                btn_scan_touch := TouchArea {
                     mouse-cursor: pointer;
 
                     Text {
@@ -53,15 +58,37 @@ export component AppWindow inherits Window {
             }
         }
 
-        Rectangle {
-            background: #002d5a;
+        VerticalBox {
+            StandardListView {
+                width: 100%;
+                height: 100%;
 
-            Text {
-                x: 8px;
-                y: 8px;
-                text: scan_results;
-                color: white;
-                vertical-stretch: 1;
+                for dev[index] in devices: Rectangle {
+                    height: 50px;
+                    background: mod(index, 2) == 0 ? #ffffff : #f5f5f5;
+
+                    HorizontalLayout {
+                        alignment: start;
+                        padding: 10px;
+
+                        Text {
+                            text: dev.ip_addr;
+                            font-size: 20px;
+                        }
+
+                        Text {
+                            text: "MAC: \{dev.mac_addr}";
+                            font-size: 15px;
+                            color: gray;
+                        }
+
+                        Text {
+                            text: "MAN: \{dev.manufacturer}";
+                            font-size: 15px;
+                            color: gray;
+                        }
+                    }
+                }
             }
         }
     }

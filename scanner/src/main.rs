@@ -1,5 +1,4 @@
 use clap::Parser;
-use scanner_lib;
 
 #[derive(Parser)]
 struct Args {
@@ -10,14 +9,14 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let net_access = scanner_lib::get_net_access().expect("could not establish net access.");
+    let net_access = scan_core::get_net_access().expect("could not establish net access.");
     let devices =
-        scanner_lib::scan_network(&net_access, &args.network).expect("could not scan network.");
+        scan_core::scan_network(&net_access, &args.network).expect("could not scan network.");
 
     print_devices(&devices);
 }
 
-fn print_devices(devices: &Vec<scanner_lib::models::NetDevice>) {
+fn print_devices(devices: &Vec<scan_core::models::NetDevice>) {
     // println!("\nfound {} devices on network:", devices.len());
     // for (i, device) in devices.iter().enumerate() {
     //     let man_name = device
@@ -33,7 +32,6 @@ fn print_devices(devices: &Vec<scanner_lib::models::NetDevice>) {
     //     );
     // }
 
-    // serialize to json
     let devices_json = serde_json::to_string(devices).expect("could not serialize devices vector");
     println!("{}", devices_json);
 }

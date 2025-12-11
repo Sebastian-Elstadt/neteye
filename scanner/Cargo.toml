@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-scanner-lib = { path = "../scanner-lib", features = ["serialize"] }
+scan-core = { path = "../scan-core", features = ["serialize"] }
 clap = { version = "4.5.53", features = ["derive"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"

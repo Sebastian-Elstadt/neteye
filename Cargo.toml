@@ -1,2 +1,2 @@
 [workspace]
-members = ["gui", "scanner", "scanner-lib"]
+members = ["gui", "scanner", "scan-core"]
